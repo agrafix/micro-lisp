@@ -13,6 +13,7 @@ import Data.Char (isDigit, isSpace)
 import Data.Functor.Identity
 import Data.Maybe
 import Data.Monoid
+import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Vector as V
@@ -102,11 +103,15 @@ double =
 lexeme :: Parser a -> Parser a
 lexeme x = skipWhile isSpace *> x <* skipWhile isSpace
 
-newtype Lambda m =
-    Lambda (Env m -> V.Vector (Expr m) -> ExceptT String m (Expr m))
+data Lambda m =
+    Lambda
+    { l_arity :: !Int
+    , l_eval :: Env m -> V.Vector (Expr m) -> ExceptT String m (Expr m)
+    , l_info :: !T.Text -- for pretty printing/errors
+    }
 
 instance Show (Lambda m) where
-    show _ = "[LAMBDA]"
+    show x = "[LAMBDA: " <> T.unpack (l_info x) <> "]"
 
 instance Eq (Lambda m) where
     (==) _ _ = False
@@ -138,17 +143,18 @@ parseList =
 data SideEffIf m
     = SideEffIf
     { se_write :: T.Text -> m ()
+    , se_debug :: T.Text -> m ()
     }
 
 ioSif :: SideEffIf IO
-ioSif = SideEffIf T.putStrLn
+ioSif = SideEffIf T.putStrLn (\x -> T.putStrLn ("[DEBUG] " <> x))
 
 pureSif :: SideEffIf Identity
-pureSif = SideEffIf (\_ -> pure ())
+pureSif = SideEffIf (const $ pure ()) (const $ pure ())
 
 data Env m =
     Env
-    { _e_vals :: [(T.Text, Env m -> V.Vector (Expr m) -> ExceptT String m (Expr m))]
+    { e_vals :: M.Map T.Text (Expr m)
       -- ^ this should be a map, but we avoid the dependency?
     , e_sideEffs :: SideEffIf m
     }
@@ -156,11 +162,11 @@ data Env m =
 fun1 ::
     Monad m => T.Text
     -> Bool -- evaluate args?
-    -> (Env m -> Expr m -> ExceptT String m b)
-    -> (T.Text, Env m -> V.Vector (Expr m) -> ExceptT String m b)
+    -> (Env m -> Expr m -> ExceptT String m (Expr m))
+    -> (T.Text, Expr m)
 fun1 name evalArgs handler =
     ( name
-    , \env args ->
+    , EFun $ flip (Lambda 1) ("<builtin:" <> name <> ">") $ \env args ->
           if V.length args /= 1
           then throwE (show name ++ " only takes 1 argument, but got " ++ show args)
           else if evalArgs
@@ -171,11 +177,11 @@ fun1 name evalArgs handler =
 fun2 ::
     Monad m => T.Text
     -> Bool -- evaluate args?
-    -> (Env m -> Expr m -> Expr m -> ExceptT String m b)
-    -> (T.Text, Env m -> V.Vector (Expr m) -> ExceptT String m b)
+    -> (Env m -> Expr m -> Expr m -> ExceptT String m (Expr m))
+    -> (T.Text, Expr m)
 fun2 name evalArgs handler =
     ( name
-    , \env args ->
+    , EFun $ flip (Lambda 2) ("<builtin:" <> name <> ">") $ \env args ->
           if V.length args /= 2
           then throwE (show name ++ " takes 2 arguments, but got " ++ show args)
           else if evalArgs
@@ -187,11 +193,11 @@ fun2 name evalArgs handler =
 fun3 ::
     Monad m => T.Text
     -> Bool -- evaluate args?
-    -> (Env m -> Expr m -> Expr m -> Expr m -> ExceptT String m b)
-    -> (T.Text, Env m -> V.Vector (Expr m) -> ExceptT String m b)
+    -> (Env m -> Expr m -> Expr m -> Expr m -> ExceptT String m (Expr m))
+    -> (T.Text, Expr m)
 fun3 name evalArgs handler =
     ( name
-    , \env args ->
+    , EFun $ flip (Lambda 3) ("<builtin:" <> name <> ">") $ \env args ->
           if V.length args /= 3
           then throwE (show name ++ " takes 3 arguments, but got " ++ show args)
           else if evalArgs
@@ -200,9 +206,6 @@ fun3 name evalArgs handler =
                        evalExpr (args V.! 2) env >>= handler env a1 a2
                   else handler env (args V.! 0) (args V.! 1) (args V.! 2)
     )
-
-constF :: Monad m => Expr m -> Env m -> args -> ExceptT String m (Expr m)
-constF e _ _ = pure e
 
 trueE :: Expr m
 trueE = EList $ V.fromList [ESym "quote", ESym "t"]
@@ -224,19 +227,29 @@ getList (EList x) = Just x
 getList _ = Nothing
 
 lambdaImpl :: Monad m => Env m -> Expr m -> Expr m -> ExceptT String m (Expr m)
-lambdaImpl env@(Env envVals sif) argList body =
+lambdaImpl (Env envVals sif) argList body =
     case argList of
       EList vec ->
           let argNames = V.mapMaybe getSym vec
-              funBody callArgs =
+              info = "args: " <> prettyE argList <> " body: " <> prettyE body
+              funBody le callArgs =
                   if V.length argNames /= V.length callArgs
-                  then throwE ("Called lambda with wrong number of args. Expected " ++ show argNames ++ ", but got: " ++ show callArgs)
-                  else do evaledArgs <- mapM (flip evalExpr env) callArgs
+                  then throwE $
+                       "Called lambda " ++ T.unpack info
+                       ++ " with wrong number of args. Expected "
+                       ++ show argNames ++ ", but got: " ++ show callArgs
+                  else do evaledArgs <- mapM (`evalExpr` le) callArgs
                           let envList =
-                                  V.toList $ V.zip argNames $ fmap constF evaledArgs
-                              localEnv = Env (envVals ++ envList) sif
-                          evalExpr body localEnv
-          in pure $ EFun $ Lambda $ \_ args -> funBody args -- TODO: env handling wrong?
+                                  M.fromList $ V.toList $ V.zip argNames evaledArgs
+                              localEnv = Env (envList <> e_vals le <> envVals) sif
+                          x <- evalExpr body localEnv
+                          pure x
+          in pure $ EFun
+             Lambda
+             { l_arity = V.length vec
+             , l_eval = funBody
+             , l_info = info
+             }
       _ -> throwE "First argument of lambda must be a list of symbols."
 
 ifImpl :: Monad m => Env m -> Expr m -> Expr m -> Expr m -> ExceptT String m (Expr m)
@@ -258,15 +271,26 @@ applyImpl env funCall funArgs =
                    r -> throwE ("Bad arguments for apply: " ++ show r)
        callFun env funCall evaledArgs
 
+mathImpl :: Monad m => T.Text -> (Double -> Double -> Double) -> Expr m -> Expr m -> ExceptT String m (Expr m)
+mathImpl name f l r =
+    case (l, r) of
+      (ENum x, ENum y) ->
+          pure (ENum $ f x y)
+      _ ->
+          throwE $
+          "Both arguments of " ++ show name ++ " should be numeric, but got "
+          ++ show (l, r)
+
 initEnv :: Monad m => SideEffIf m -> Env m
 initEnv =
-    Env
-    [ ("null", constF nullE)
-    , ("true", constF trueE)
-    , ("false", constF falseE)
+    (Env . M.fromList)
+    [ ("null", nullE)
+    , ("true", trueE)
+    , ("false", falseE)
     , fun1 "pair?" True $ \_ arg -> pure (if isJust (getList arg) then trueE else falseE)
     , fun1 "sym?" True $ \_ arg -> pure (if isJust (getSym arg) then trueE else falseE)
     , fun1 "num?" True $ \_ arg -> pure (if isJust (getNum arg) then trueE else falseE)
+    , fun1 "null?" True $ \_ arg -> pure (if arg == nullE then trueE else falseE)
     , fun1 "quote" False $ \_ arg -> pure arg
     , fun1 "write" True $ \env arg ->
             do lift $ (se_write (e_sideEffs env)) $ prettyE arg
@@ -282,17 +306,33 @@ initEnv =
     , fun2 "cons" True $ \_ argH argT ->
             case argT of
               EList vec -> pure (EList $ V.cons argH vec)
-              _ -> throwE ("Second argument of cons must be list, is: " ++ show argT)
+              _ ->
+                  throwE ("Trying to cons " ++ show argH ++ " but second argument of cons must be list, is: " ++ show argT)
     , fun2 "eq?" True $ \_ l r -> pure (if l == r then trueE else falseE)
+    , fun2 "+" True $ \_ -> mathImpl "+" (+)
+    , fun2 "-" True $ \_ -> mathImpl "-" (-)
+    , fun2 "*" True $ \_ -> mathImpl "*" (*)
+    , fun2 "/" True $ \_ -> mathImpl "/" (/)
     , fun2 "lambda" False lambdaImpl
     , fun2 "apply" False applyImpl
     , fun3 "if" False ifImpl
     ]
 
+debugW :: (Monad m, MonadTrans t) => Env m -> T.Text -> t m ()
+debugW env t =
+    lift $
+    se_debug (e_sideEffs env) t
+
 evalExpr :: Monad m => Expr m -> Env m -> ExceptT String m (Expr m)
 evalExpr e env =
+    do r <- evalExpr' e env
+       debugW env ("Finished evaluating:\n" <> prettyE e <> "\nTo:\n" <> prettyE r <> "\n")
+       pure r
+
+evalExpr' :: Monad m => Expr m -> Env m -> ExceptT String m (Expr m)
+evalExpr' e env =
     case e of
-      ESym sym -> apply sym env mempty
+      ESym sym -> resolveSymbol sym env
       ENum _ -> pure e
       EFun _ -> pure e
       EList vec
@@ -308,14 +348,24 @@ callFun env fun args =
              _ -> evalExpr fun env
        case call of
          ESym sym -> apply sym env args
-         EFun (Lambda go) -> go env args
+         EFun (Lambda _ go _) ->
+             do r <- go env args
+                pure r
          _ -> throwE ("Expected a symbol or lambda, but got: " ++ show call)
 
 apply :: Monad m => T.Text -> Env m -> V.Vector (Expr m) -> ExceptT String m (Expr m)
-apply sym e@(Env env _) args =
-    case lookup sym env of
-      Just body -> body e args
-      Nothing -> throwE ("Undefined symbol " ++ show sym)
+apply sym e args =
+    do funE <- resolveSymbol sym e
+       callFun e funE args
+
+resolveSymbol :: Monad m => T.Text -> Env m -> ExceptT String m (Expr m)
+resolveSymbol sym (Env env _) =
+    case M.lookup sym env of
+      Just val -> pure val
+      Nothing ->
+          throwE $
+          "Undefined symbol " ++ show sym ++ ". Defined: "
+          ++ show (fst <$> (M.toList env))
 
 -- parse and run combined
 parseAndRunIO :: T.Text -> IO (Either String (Expr IO))
@@ -336,4 +386,4 @@ prettyE e =
       EList v
           | e == nullE -> "null"
           | otherwise -> "(" <> T.intercalate " " (V.toList $ prettyE <$> v) <> ")"
-      EFun _ -> "<lambda>"
+      EFun l -> "<lambda: " <> l_info l <> ">"

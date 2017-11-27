@@ -6,6 +6,7 @@ import Data.Functor.Identity
 import Data.IORef
 import Language.Micro.Lisp
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 
 evalTest :: T.Text -> T.Text -> SpecWith ()
 evalTest input output =
@@ -21,6 +22,7 @@ evalTestSideEffs input output expectedWritten =
        let sif =
                SideEffIf
                { se_write = modifyIORef' ref . (:)
+               , se_debug = const $ pure ()
                }
        res <- runExceptT (parseAndRun sif input)
        case res of
@@ -75,3 +77,13 @@ main =
               evalTest "(if (eq? (quote hello) (quote hello)) (quote foo) (cons (quote bar) (quote bar)))" "foo"
               evalTest "(if false (quote foo) (quote bar))" "bar"
               evalTest "(apply eq? ((quote foo) (quote foo)))" "(quote t)"
+              evalTest "(+ 1 2)" "3.0"
+              evalTest "(/ 1 2)" "0.5"
+              evalTest "(* 1 2)" "2.0"
+              evalTest "(- 1 2)" "-1.0"
+       describe "lambda" $
+           do evalTest "((lambda (x) ((lambda (y) y) x)) (quote t))" "t"
+              evalTest "((lambda (g) (g g (quote t))) (lambda (f el) el))" "t"
+       describe "from file" $
+           do runIO (T.readFile "lisp/map.lisp") >>=
+                  \f -> evalTest f "(2.0 4.0 6.0 8.0 10.0 12.0 14.0 16.0 18.0)"
