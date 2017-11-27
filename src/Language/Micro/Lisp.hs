@@ -7,6 +7,7 @@ where
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Trans
 import Control.Monad.Trans.Except
 import Data.Char (isDigit, isSpace)
 import Data.Functor.Identity
@@ -149,7 +150,7 @@ data Env m =
     Env
     { _e_vals :: [(T.Text, Env m -> V.Vector (Expr m) -> ExceptT String m (Expr m))]
       -- ^ this should be a map, but we avoid the dependency?
-    , _e_sideEffs :: SideEffIf m
+    , e_sideEffs :: SideEffIf m
     }
 
 fun1 ::
@@ -231,6 +232,9 @@ initEnv =
     , fun1 "sym?" True $ \_ arg -> pure (if isJust (getSym arg) then trueE else falseE)
     , fun1 "num?" True $ \_ arg -> pure (if isJust (getNum arg) then trueE else falseE)
     , fun1 "quote" False $ \_ arg -> pure arg
+    , fun1 "write" True $ \env arg ->
+            do lift $ (se_write (e_sideEffs env)) $ prettyE arg
+               pure trueE
     , fun1 "car" True $ \_ arg ->
             case arg of
               EList vec | not (V.null vec) -> pure (V.head vec)
