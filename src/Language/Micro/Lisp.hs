@@ -184,6 +184,23 @@ fun2 name evalArgs handler =
                   else handler env (args V.! 0) (args V.! 1)
     )
 
+fun3 ::
+    Monad m => T.Text
+    -> Bool -- evaluate args?
+    -> (Env m -> Expr m -> Expr m -> Expr m -> ExceptT String m b)
+    -> (T.Text, Env m -> V.Vector (Expr m) -> ExceptT String m b)
+fun3 name evalArgs handler =
+    ( name
+    , \env args ->
+          if V.length args /= 3
+          then throwE (show name ++ " takes 3 arguments, but got " ++ show args)
+          else if evalArgs
+                  then evalExpr (args V.! 0) env >>= \a1 ->
+                       evalExpr (args V.! 1) env >>= \a2 ->
+                       evalExpr (args V.! 2) env >>= handler env a1 a2
+                  else handler env (args V.! 0) (args V.! 1) (args V.! 2)
+    )
+
 constF :: Monad m => Expr m -> Env m -> args -> ExceptT String m (Expr m)
 constF e _ _ = pure e
 
@@ -222,6 +239,13 @@ lambdaImpl env@(Env envVals sif) argList body =
           in pure $ EFun $ Lambda $ \_ args -> funBody args -- TODO: env handling wrong?
       _ -> throwE "First argument of lambda must be a list of symbols."
 
+ifImpl :: Monad m => Env m -> Expr m -> Expr m -> Expr m -> ExceptT String m (Expr m)
+ifImpl env cond trueB falseB =
+    do r <- evalExpr cond env
+       if r == falseE
+          then evalExpr falseB env
+          else evalExpr trueB env
+
 initEnv :: Monad m => SideEffIf m -> Env m
 initEnv =
     Env
@@ -249,6 +273,7 @@ initEnv =
               _ -> throwE ("Second argument of cons must be list, is: " ++ show argT)
     , fun2 "eq?" True $ \_ l r -> pure (if l == r then trueE else falseE)
     , fun2 "lambda" False lambdaImpl
+    , fun3 "if" False ifImpl
     ]
 
 evalExpr :: Monad m => Expr m -> Env m -> ExceptT String m (Expr m)

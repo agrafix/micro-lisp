@@ -70,3 +70,7 @@ main =
        describe "More test cases" $
            do evalTest "(sym? (quote foo))" "(quote t)"
               evalTest "(num? 1.0)" "(quote t)"
+              evalTest "(if true (quote foo) (quote bar))" "foo"
+              evalTest "(if (eq? (quote hello) (quote hello)) (quote foo) (quote bar))" "foo"
+              evalTest "(if (eq? (quote hello) (quote hello)) (quote foo) (cons (quote bar) (quote bar)))" "foo"
+              evalTest "(if false (quote foo) (quote bar))" "bar"
