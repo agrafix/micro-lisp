@@ -172,9 +172,17 @@ falseE, nullE :: Expr
 nullE = EList mempty
 falseE = nullE
 
+getNum :: Expr -> Maybe Double
+getNum (ENum x) = Just x
+getNum _ = Nothing
+
 getSym :: Expr -> Maybe T.Text
 getSym (ESym x) = Just x
 getSym _ = Nothing
+
+getList :: Expr -> Maybe (V.Vector Expr)
+getList (EList x) = Just x
+getList _ = Nothing
 
 lambdaImpl :: Env -> Expr -> Expr -> Either String Expr
 lambdaImpl env@(Env envVals) argList body =
@@ -199,6 +207,9 @@ initEnv =
     [ ("null", \_ _ -> Right nullE)
     , ("true", \_ _ -> Right trueE)
     , ("false", \_ _ -> Right falseE)
+    , fun1 "pair?" True $ \_ arg -> Right (if isJust (getList arg) then trueE else falseE)
+    , fun1 "sym?" True $ \_ arg -> Right (if isJust (getSym arg) then trueE else falseE)
+    , fun1 "num?" True $ \_ arg -> Right (if isJust (getNum arg) then trueE else falseE)
     , fun1 "quote" False $ \_ arg -> Right arg
     , fun1 "car" True $ \_ arg ->
             case arg of

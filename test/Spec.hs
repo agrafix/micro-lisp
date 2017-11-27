@@ -14,7 +14,7 @@ evalTest input output =
 main :: IO ()
 main =
     hspec $
-    do describe "Basic evaluation test cases" $
+    do describe "Test cases from cardl/micro-lisp" $
            -- derived from
            -- https://github.com/carld/micro-lisp/blob/master/test.sh
            do evalTest "(car (quote (1 2 3 4)))" "1.0"
@@ -35,3 +35,6 @@ main =
               evalTest "(cons (quote 1) (cons (quote 2) null))" "(1.0 2.0)"
               evalTest "(write (cons (quote (hello world)) null))" "((hello world))"
               evalTest "((lambda (x y) (cons y (cons x null))) (quote 67) (quote 89))" "(89.0 67.0)"
+       describe "More test cases" $
+           do evalTest "(sym? (quote foo))" "(quote t)"
+              evalTest "(num? 1.0)" "(quote t)"
