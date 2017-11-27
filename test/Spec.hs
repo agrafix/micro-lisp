@@ -1,13 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 import Test.Hspec
 
+import Control.Monad.Trans.Except
+import Data.Functor.Identity
 import Language.Micro.Lisp
 import qualified Data.Text as T
 
 evalTest :: T.Text -> T.Text -> SpecWith ()
 evalTest input output =
     it ("Evaluates " ++ show input ++ " to " ++ show output) $
-    case parseAndRun input of
+    case runIdentity (runExceptT (parseAndRun pureSif input)) of
       Left err -> expectationFailure err
       Right ok -> prettyE ok `shouldBe` output
 

@@ -11,7 +11,8 @@ main =
     do args <- getArgs
        case args of
          [x] ->
-             case parseAndRun (T.pack x) of
+             parseAndRunIO (T.pack x) >>= \r ->
+             case r of
                Left err -> error err
                Right ok -> T.putStrLn (prettyE ok)
          _ -> error "Usage: ./micro-lisp EXPR"
