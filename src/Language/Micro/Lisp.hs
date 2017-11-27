@@ -97,11 +97,21 @@ double =
 lexeme :: Parser a -> Parser a
 lexeme x = skipWhile isSpace *> x <* skipWhile isSpace
 
+newtype Lambda =
+    Lambda (Env -> V.Vector Expr -> Either String Expr)
+
+instance Show Lambda where
+    show _ = "[LAMBDA]"
+
+instance Eq Lambda where
+    (==) _ _ = False
+
 -- This is the AST:
 data Expr
     = EList !(V.Vector Expr)
     | ESym !T.Text
     | ENum !Double
+    | EFun !Lambda -- Internal use.
     deriving (Show, Eq)
 
 -- Now we can define the parser:
@@ -162,6 +172,27 @@ falseE, nullE :: Expr
 nullE = EList mempty
 falseE = nullE
 
+getSym :: Expr -> Maybe T.Text
+getSym (ESym x) = Just x
+getSym _ = Nothing
+
+lambdaImpl :: Env -> Expr -> Expr -> Either String Expr
+lambdaImpl env@(Env envVals) argList body =
+    case argList of
+      EList vec ->
+          let argNames = V.mapMaybe getSym vec
+              funBody callArgs =
+                  if V.length argNames /= V.length callArgs
+                  then Left ("Called lambda with wrong number of args. Expected " ++ show argNames ++ ", but got: " ++ show callArgs)
+                  else do evaledArgs <- mapM (flip evalExpr env) callArgs
+                          let envList =
+                                  V.toList $ V.zip argNames $
+                                  fmap (\e -> \_ _ -> Right e) evaledArgs
+                              localEnv = Env $ envVals ++ envList
+                          evalExpr body localEnv
+          in Right $ EFun $ Lambda $ \_ args -> funBody args -- TODO: env handling wrong?
+      _ -> Left "First argument of lambda must be a list of symbols."
+
 initEnv :: Env
 initEnv =
     Env
@@ -182,13 +213,15 @@ initEnv =
               EList vec -> Right (EList $ V.cons argH vec)
               _ -> Left ("Second argument of cons must be list, is: " ++ show argT)
     , fun2 "eq?" True $ \_ l r -> Right (if l == r then trueE else falseE)
+    , fun2 "lambda" False lambdaImpl
     ]
 
 evalExpr :: Expr -> Env -> Either String Expr
 evalExpr e env =
     case e of
       ESym sym -> apply sym env mempty
-      ENum x -> Right $ ENum x
+      ENum _ -> Right e
+      EFun _ -> Right e
       EList vec
           | V.null vec -> Right $ EList vec
           | otherwise ->
@@ -196,10 +229,12 @@ evalExpr e env =
                    call <-
                        case h of
                          ESym _ -> pure h
+                         EFun _ -> pure h
                          _ -> evalExpr h env
                    case call of
                      ESym sym -> apply sym env (V.tail vec)
-                     _ -> Left ("Expected a symbol, but got: " ++ show call)
+                     EFun (Lambda go) -> go env (V.tail vec)
+                     _ -> Left ("Expected a symbol or lambda, but got: " ++ show call)
 
 apply :: T.Text -> Env -> V.Vector Expr -> Either String Expr
 apply sym e@(Env env) args =
@@ -223,3 +258,4 @@ prettyE e =
       EList v
           | e == nullE -> "null"
           | otherwise -> "(" <> T.intercalate " " (V.toList $ prettyE <$> v) <> ")"
+      EFun _ -> "<lambda>"
