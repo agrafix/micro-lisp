@@ -246,6 +246,18 @@ ifImpl env cond trueB falseB =
           then evalExpr falseB env
           else evalExpr trueB env
 
+applyImpl :: Monad m => Env m -> Expr m -> Expr m -> ExceptT String m (Expr m)
+applyImpl env funCall funArgs =
+    do evaledArgs <-
+           case funArgs of
+             EList vec -> pure vec
+             _ ->
+                 evalExpr funArgs env >>= \q ->
+                 case q of
+                   EList vec -> pure vec
+                   r -> throwE ("Bad arguments for apply: " ++ show r)
+       callFun env funCall evaledArgs
+
 initEnv :: Monad m => SideEffIf m -> Env m
 initEnv =
     Env
@@ -273,6 +285,7 @@ initEnv =
               _ -> throwE ("Second argument of cons must be list, is: " ++ show argT)
     , fun2 "eq?" True $ \_ l r -> pure (if l == r then trueE else falseE)
     , fun2 "lambda" False lambdaImpl
+    , fun2 "apply" False applyImpl
     , fun3 "if" False ifImpl
     ]
 
@@ -284,17 +297,19 @@ evalExpr e env =
       EFun _ -> pure e
       EList vec
           | V.null vec -> pure $ EList vec
-          | otherwise ->
-                do let h = V.head vec
-                   call <-
-                       case h of
-                         ESym _ -> pure h
-                         EFun _ -> pure h
-                         _ -> evalExpr h env
-                   case call of
-                     ESym sym -> apply sym env (V.tail vec)
-                     EFun (Lambda go) -> go env (V.tail vec)
-                     _ -> throwE ("Expected a symbol or lambda, but got: " ++ show call)
+          | otherwise -> callFun env (V.head vec) (V.tail vec)
+
+callFun :: Monad m => Env m -> Expr m -> V.Vector (Expr m) -> ExceptT String m (Expr m)
+callFun env fun args =
+    do call <-
+           case fun of
+             ESym _ -> pure fun
+             EFun _ -> pure fun
+             _ -> evalExpr fun env
+       case call of
+         ESym sym -> apply sym env args
+         EFun (Lambda go) -> go env args
+         _ -> throwE ("Expected a symbol or lambda, but got: " ++ show call)
 
 apply :: Monad m => T.Text -> Env m -> V.Vector (Expr m) -> ExceptT String m (Expr m)
 apply sym e@(Env env _) args =

@@ -74,3 +74,4 @@ main =
               evalTest "(if (eq? (quote hello) (quote hello)) (quote foo) (quote bar))" "foo"
               evalTest "(if (eq? (quote hello) (quote hello)) (quote foo) (cons (quote bar) (quote bar)))" "foo"
               evalTest "(if false (quote foo) (quote bar))" "bar"
+              evalTest "(apply eq? ((quote foo) (quote foo)))" "(quote t)"
