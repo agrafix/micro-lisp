@@ -1,0 +1,47 @@
+name:                micro-lisp
+version:             0.1.0.0
+synopsis:            A minimal LISP interpreter with minimal dependencies
+description:         A minimal LISP interpreter with minimal dependencies
+homepage:            https://github.com/agrafix/micro-lisp#readme
+license:             MIT
+license-file:        LICENSE
+author:              Alexander Thiemann
+maintainer:          mail@athiemann.net
+copyright:           2017 Alexander Thiemann <mail@athiemann.net>
+category:            Web
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+
+library
+  hs-source-dirs:      src
+  exposed-modules:     Language.Micro.Lisp
+  build-depends:       base >= 4.7 && < 5
+                     , text
+                     , vector
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
+executable micro-lisp
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , text
+                     , micro-lisp
+  default-language:    Haskell2010
+
+test-suite micro-lisp-test
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  build-depends:       base
+                     , micro-lisp
+                     , hspec
+                     , text
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/agrafix/micro-lisp
