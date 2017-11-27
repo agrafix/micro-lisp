@@ -144,13 +144,18 @@ data SideEffIf m
     = SideEffIf
     { se_write :: T.Text -> m ()
     , se_debug :: T.Text -> m ()
+    , se_readLine :: m T.Text
     }
 
-ioSif :: SideEffIf IO
-ioSif = SideEffIf T.putStrLn (\x -> T.putStrLn ("[DEBUG] " <> x))
+ioSif :: Bool -> SideEffIf IO
+ioSif debug =
+    SideEffIf
+       T.putStrLn
+       (\x -> if debug then T.putStrLn ("[DEBUG] " <> x) else pure ())
+       T.getLine
 
 pureSif :: SideEffIf Identity
-pureSif = SideEffIf (const $ pure ()) (const $ pure ())
+pureSif = SideEffIf (const $ pure ()) (const $ pure ()) (pure mempty)
 
 data Env m =
     Env
@@ -158,6 +163,19 @@ data Env m =
       -- ^ this should be a map, but we avoid the dependency?
     , e_sideEffs :: SideEffIf m
     }
+
+fun0 ::
+    Monad m =>
+    T.Text
+    -> (Env m -> ExceptT String m (Expr m))
+    -> (T.Text, Expr m)
+fun0 name handler =
+    ( name
+    , EFun $ flip (Lambda 0) ("<builtin:" <> name <> ">") $ \env args ->
+          if V.length args /= 0
+          then throwE (show name ++ " takes no args, but got " ++ show args)
+          else handler env
+    )
 
 fun1 ::
     Monad m => T.Text
@@ -262,13 +280,10 @@ ifImpl env cond trueB falseB =
 applyImpl :: Monad m => Env m -> Expr m -> Expr m -> ExceptT String m (Expr m)
 applyImpl env funCall funArgs =
     do evaledArgs <-
-           case funArgs of
+           evalExpr funArgs env >>= \q ->
+           case q of
              EList vec -> pure vec
-             _ ->
-                 evalExpr funArgs env >>= \q ->
-                 case q of
-                   EList vec -> pure vec
-                   r -> throwE ("Bad arguments for apply: " ++ show r)
+             r -> throwE ("Bad arguments for apply: " ++ show r)
        callFun env funCall evaledArgs
 
 mathImpl :: Monad m => T.Text -> (Double -> Double -> Double) -> Expr m -> Expr m -> ExceptT String m (Expr m)
@@ -281,14 +296,24 @@ mathImpl name f l r =
           "Both arguments of " ++ show name ++ " should be numeric, but got "
           ++ show (l, r)
 
+readImpl :: Monad m => Env m -> ExceptT String m (Expr m)
+readImpl env =
+    do input <- lift (se_readLine $ e_sideEffs env)
+       case runParser parseExpr input of
+         (_, Right ok) -> pure ok
+         (_, Left err) ->
+             throwE $ T.unpack $
+             "Failed to parse " <> input <> ": " <> err
+
 initEnv :: Monad m => SideEffIf m -> Env m
 initEnv =
     (Env . M.fromList)
     [ ("null", nullE)
     , ("true", trueE)
     , ("false", falseE)
+    , fun0 "read" readImpl
     , fun1 "pair?" True $ \_ arg -> pure (if isJust (getList arg) then trueE else falseE)
-    , fun1 "sym?" True $ \_ arg -> pure (if isJust (getSym arg) then trueE else falseE)
+    , fun1 "symbol?" True $ \_ arg -> pure (if isJust (getSym arg) then trueE else falseE)
     , fun1 "num?" True $ \_ arg -> pure (if isJust (getNum arg) then trueE else falseE)
     , fun1 "null?" True $ \_ arg -> pure (if arg == nullE then trueE else falseE)
     , fun1 "quote" False $ \_ arg -> pure arg
@@ -298,6 +323,8 @@ initEnv =
     , fun1 "car" True $ \_ arg ->
             case arg of
               EList vec | not (V.null vec) -> pure (V.head vec)
+              ESym _ -> pure arg
+              ENum _ -> pure arg
               _ -> throwE ("Can not call car on: " ++ show arg)
     , fun1 "cdr" True $ \_ arg ->
             case arg of
@@ -368,8 +395,8 @@ resolveSymbol sym (Env env _) =
           ++ show (fst <$> (M.toList env))
 
 -- parse and run combined
-parseAndRunIO :: T.Text -> IO (Either String (Expr IO))
-parseAndRunIO t = runExceptT $ parseAndRun ioSif t
+parseAndRunIO :: Bool -> T.Text -> IO (Either String (Expr IO))
+parseAndRunIO debug t = runExceptT $ parseAndRun (ioSif debug) t
 
 parseAndRun :: Monad m => SideEffIf m -> T.Text -> ExceptT String m (Expr m)
 parseAndRun sif t =

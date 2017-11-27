@@ -15,14 +15,15 @@ evalTest input output =
       Left err -> expectationFailure err
       Right ok -> prettyE ok `shouldBe` output
 
-evalTestSideEffs :: T.Text -> T.Text -> [T.Text] -> SpecWith ()
-evalTestSideEffs input output expectedWritten =
+evalTestSideEffs :: T.Text -> T.Text -> T.Text -> [T.Text] -> SpecWith ()
+evalTestSideEffs input output readVal expectedWritten =
     it ("Evaluates " ++ show input ++ " to " ++ show output ++ " with output") $
     do ref <- newIORef []
        let sif =
                SideEffIf
                { se_write = modifyIORef' ref . (:)
                , se_debug = const $ pure ()
+               , se_readLine = pure readVal
                }
        res <- runExceptT (parseAndRun sif input)
        case res of
@@ -59,31 +60,40 @@ main =
            do evalTestSideEffs
                   "((lambda (x) (write x)) (quote hello))"
                   "(quote t)"
+                  ""
                   ["hello"]
               evalTestSideEffs
                   "(write (quote (cons (quote 1) (quote 2))))"
                   "(quote t)"
+                  ""
                   ["(cons (quote 1.0) (quote 2.0))"]
               evalTestSideEffs
                   "(write (cons (quote (hello world)) null))"
                   "(quote t)"
+                  ""
                   ["((hello world))"]
 
        describe "More test cases" $
-           do evalTest "(sym? (quote foo))" "(quote t)"
+           do evalTest "(symbol? (quote foo))" "(quote t)"
               evalTest "(num? 1.0)" "(quote t)"
               evalTest "(if true (quote foo) (quote bar))" "foo"
               evalTest "(if (eq? (quote hello) (quote hello)) (quote foo) (quote bar))" "foo"
               evalTest "(if (eq? (quote hello) (quote hello)) (quote foo) (cons (quote bar) (quote bar)))" "foo"
               evalTest "(if false (quote foo) (quote bar))" "bar"
-              evalTest "(apply eq? ((quote foo) (quote foo)))" "(quote t)"
+              evalTest "(apply eq? (quote ((quote foo) (quote foo))))" "(quote t)"
               evalTest "(+ 1 2)" "3.0"
               evalTest "(/ 1 2)" "0.5"
               evalTest "(* 1 2)" "2.0"
               evalTest "(- 1 2)" "-1.0"
+              evalTest "((lambda (val) (apply (car val) (cdr val))) (quote (+ 1 2)))" "3.0"
+       describe "More side effect test cases" $
+           do evalTestSideEffs "(read)" "(quote t)" "(quote t)" []
+              evalTestSideEffs "(read)" "(+ 1.0 1.0)" "(+ 1 1)" []
        describe "lambda" $
            do evalTest "((lambda (x) ((lambda (y) y) x)) (quote t))" "t"
               evalTest "((lambda (g) (g g (quote t))) (lambda (f el) el))" "t"
        describe "from file" $
            do runIO (T.readFile "lisp/map.lisp") >>=
                   \f -> evalTest f "(2.0 4.0 6.0 8.0 10.0 12.0 14.0 16.0 18.0)"
+              runIO (T.readFile "lisp/eval.lisp") >>=
+                  \f -> evalTestSideEffs f "2.0" "(+ 1.0 1.0)" []
