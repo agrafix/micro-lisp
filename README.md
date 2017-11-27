@@ -9,3 +9,22 @@ A small lisp interpreter written in Haskell with minimal dependencies. A few not
 Pull requests are welcome - if you find a bug or plan to add a feature please include unit tests.
 
 A blog post might follow... :-)
+
+## Setup
+
+* Download and install [Haskell Stack](http://haskellstack.org/).
+* Clone the repo, run `stack setup && stack build`
+* To install system wide run `stack install`.
+
+## Usage
+
+```bash
+# from file
+micro-lisp -f [source-file]
+
+# inline
+micro-lisp "(+ 1 1)"
+
+# from standard in
+echo "(+ 1 1)" | micro-lisp
+```
